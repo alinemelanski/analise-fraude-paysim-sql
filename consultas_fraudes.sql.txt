@@ -1,0 +1,133 @@
+-- =====================================================
+-- Análise de Fraudes com SQL — PaySim
+-- Autora: Aline Melanski
+-- Ferramentas: SQLite + DB Browser for SQLite
+-- Tabela: transacoes (dataset sintético PaySim, Kaggle)
+-- =====================================================
+
+
+-- =====================================================
+-- D1. Volume de transações e fraudes por tipo
+-- Pergunta de negócio: em quais tipos de transação o fraudador age?
+-- Conclusão: (escreva a sua)
+-- =====================================================
+SELECT type,
+       COUNT(*)     AS total,
+       SUM(isFraud) AS fraudes
+FROM transacoes
+GROUP BY type
+ORDER BY fraudes DESC;
+
+
+-- =====================================================
+-- D2. Taxa de fraude (%) por tipo
+-- Pergunta de negócio: qual a proporção de fraude em cada tipo?
+-- Conclusão: (escreva a sua)
+-- =====================================================
+-- (ainda não feito: complete aqui)
+
+
+-- =====================================================
+-- D3. As 20 fraudes de maior valor
+-- Pergunta de negócio: o que o fraudador faz com o saldo da vítima?
+-- Conclusão: (escreva a sua)
+-- =====================================================
+SELECT type,
+       amount,
+       oldbalanceOrg,
+       newbalanceOrig,
+       ROUND(amount * 100.0 / oldbalanceOrg, 1) AS perc_levado
+FROM transacoes
+WHERE isFraud = 1
+  AND oldbalanceOrg > 0
+ORDER BY amount DESC
+LIMIT 20;
+
+
+-- =====================================================
+-- D4. Transações que esvaziam a conta da vítima
+-- Pergunta de negócio: zerar o saldo é um bom sinal de fraude?
+-- Conclusão: (escreva a sua)
+-- =====================================================
+SELECT type,
+       COUNT(*)     AS total,
+       SUM(isFraud) AS fraudes
+FROM transacoes
+WHERE oldbalanceOrg > 0
+  AND newbalanceOrig = 0
+  AND amount = oldbalanceOrg
+GROUP BY type
+ORDER BY fraudes DESC;
+
+
+-- =====================================================
+-- D5. Contas que recebem de muitas origens (possíveis laranjas)
+-- Pergunta de negócio: muitos remetentes indicam conta laranja?
+-- Conclusão: (escreva a sua)
+-- =====================================================
+SELECT nameDest,
+       COUNT(DISTINCT nameOrig) AS recebeu,
+       SUM(isFraud)             AS fraudes_recebidas,
+       SUM(amount * isFraud)    AS valor_fraude
+FROM transacoes
+WHERE nameDest LIKE 'C%'
+GROUP BY nameDest
+HAVING COUNT(DISTINCT nameOrig) > 3
+ORDER BY fraudes_recebidas DESC
+LIMIT 20;
+
+
+-- =====================================================
+-- D6. Matriz de confusão: regra atual x regra nova
+-- Pergunta de negócio: a regra de saldo esvaziado é melhor que a regra atual?
+-- Conclusão: (escreva a sua)
+-- =====================================================
+SELECT 'regra atual' AS regra,
+       CASE
+         WHEN isFlaggedFraud = 1 AND isFraud = 1 THEN 'acerto: pegou fraude'
+         WHEN isFlaggedFraud = 0 AND isFraud = 1 THEN 'falso negativo: fraude passou'
+         WHEN isFlaggedFraud = 1 AND isFraud = 0 THEN 'falso positivo: travou cliente bom'
+         WHEN isFlaggedFraud = 0 AND isFraud = 0 THEN 'acerto: cliente bom passou'
+       END AS situacao,
+       COUNT(*) AS total
+FROM transacoes
+GROUP BY situacao
+
+UNION ALL
+
+SELECT 'regra nova' AS regra,
+       CASE
+         WHEN (oldbalanceOrg > 0 AND newbalanceOrig = 0 AND amount = oldbalanceOrg) AND isFraud = 1
+              THEN 'acerto: pegou fraude'
+         WHEN NOT (oldbalanceOrg > 0 AND newbalanceOrig = 0 AND amount = oldbalanceOrg) AND isFraud = 1
+              THEN 'falso negativo: fraude passou'
+         WHEN (oldbalanceOrg > 0 AND newbalanceOrig = 0 AND amount = oldbalanceOrg) AND isFraud = 0
+              THEN 'falso positivo: travou cliente bom'
+         WHEN NOT (oldbalanceOrg > 0 AND newbalanceOrig = 0 AND amount = oldbalanceOrg) AND isFraud = 0
+              THEN 'acerto: cliente bom passou'
+       END AS situacao,
+       COUNT(*) AS total
+FROM transacoes
+GROUP BY situacao;
+
+
+-- =====================================================
+-- D7. Transferência seguida de saque na mesma hora
+-- Pergunta de negócio: o fraudador saca logo depois de transferir?
+-- Conclusão: (escreva a sua)
+-- =====================================================
+SELECT COUNT(*) AS pares_transfer_saque
+FROM (
+    SELECT step,
+           type,
+           amount,
+           LEAD(type) OVER (PARTITION BY amount ORDER BY step) AS proximo_tipo,
+           LEAD(step) OVER (PARTITION BY amount ORDER BY step) AS proximo_step
+    FROM transacoes
+    WHERE isFraud = 1
+      AND type IN ('TRANSFER', 'CASH_OUT')
+) AS janela
+WHERE type = 'TRANSFER'
+  AND proximo_tipo = 'CASH_OUT'
+  AND amount > 0
+  AND proximo_step = step;
